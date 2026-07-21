@@ -1,128 +1,98 @@
-"""Solve orchestrator: engine + classical, independently verified, best wins.
+"""Solve orchestrator: two independent engines, independently verified, best wins.
 
-Flow:
-  1. Build the problem and run the QBridge engine (QOKit by default; entirely
-     invisible to the caller).
-  2. Also run the classical solver - exact enumeration when the problem is small
-     enough (which yields the true optimum and can prove infeasibility), a
-     heuristic otherwise.
-  3. Independently verify every candidate against the raw spec and return the
-     **best feasible one by objective value**. On small problems this guarantees
-     the exact optimum rather than whatever feasible sample the engine produced;
-     on large problems it returns the best verified answer found.
-  4. ``status == 'solved'`` always means "independently verified to satisfy every
-     constraint" - never an unchecked answer. Optimality is guaranteed only on
-     the exact tier (see ``capabilities()``).
+OptiMCP implements no solver of its own. It runs two mature open-source engines
+and trusts neither blindly:
+
+  1. **CP-SAT** (OR-Tools) - an exact constraint/integer solver that proves both
+     optimality and infeasibility.
+  2. **Simulated annealing** (dwave-samplers over a dimod QUBO) - a
+     quantum-inspired heuristic sampler; a genuinely different method.
+
+Every assignment either engine proposes is independently re-checked against the
+raw spec by :func:`optimcp.verify.verify_assignment` (this repository's actual
+engineering focus). Only *verified-feasible* candidates compete, and the best one
+by objective value is returned.
+
+  * ``status == 'solved'`` always means "independently verified to satisfy every
+    constraint" - never an unchecked answer.
+  * ``status == 'infeasible'`` is returned only when CP-SAT *proves* no assignment
+    can satisfy the constraints.
+  * Optimality is guaranteed when CP-SAT reports it (see ``capabilities()``).
 """
 
 from __future__ import annotations
 
-import contextlib
-import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
-from optimcp.builder import build_problem
-from optimcp.classical import classical_solve
+from optimcp.engines.annealer import solve_annealer
+from optimcp.engines.cpsat import solve_cpsat
 from optimcp.result import DecisionResult, VerificationCertificate
 from optimcp.spec import DecisionSpec
 from optimcp.verify import verify_assignment
 
-# Engine kwargs we allow callers/tools to forward; everything else is ignored so
-# the tool surface stays small and quantum-free.
-_ENGINE_KWARGS = {"p", "alpha", "maxiter", "shots", "n_seeds", "presolve", "mixer"}
-
-
-def _coerce_assignment(
-    spec: DecisionSpec, raw: Dict[str, Any]
-) -> Optional[Dict[str, int]]:
-    assignment: Dict[str, int] = {}
-    for name in spec.variable_names():
-        if name not in raw:
-            return None
-        value = raw[name]
-        try:
-            assignment[name] = int(round(float(value)))
-        except (TypeError, ValueError):
-            return None
-    return assignment
-
-
-def _try_engine(
-    spec: DecisionSpec, engine_kwargs: Dict[str, Any]
-) -> tuple[Optional[Dict[str, int]], Optional[str]]:
-    """Run the engine; return (assignment, error). Never raises."""
-    try:
-        problem, _ = build_problem(spec)
-        # The engine prints solver progress to stdout; on an MCP stdio server
-        # that would corrupt the JSON-RPC stream, so route it to stderr.
-        with contextlib.redirect_stdout(sys.stderr):
-            result = problem.solve(**engine_kwargs)
-        assignment = _coerce_assignment(spec, dict(result.assignment))
-        return assignment, None
-    except Exception as exc:  # noqa: BLE001 - engine failure must fall back, not crash
-        return None, f"{type(exc).__name__}: {exc}"
+# Ordered so the exact engine is tried first; ties in objective keep its answer.
+_ENGINES = (
+    ("cp-sat", solve_cpsat),
+    ("simulated-annealing", solve_annealer),
+)
 
 
 def solve_decision(
     spec: DecisionSpec,
     *,
     include_diagnostics: bool = False,
-    _force_engine_failure: bool = False,
-    **engine_kwargs: Any,
+    _engines: Optional[Tuple[str, ...]] = None,
+    **_ignored: object,
 ) -> DecisionResult:
     """Return a verified, constraint-satisfying answer for ``spec`` if one exists.
 
-    ``include_diagnostics=True`` attaches an internal ``diagnostics`` block
-    (which engine produced the answer, timings). It is off by default so the
-    response carries no quantum vocabulary.
+    ``include_diagnostics=True`` attaches an internal ``diagnostics`` block (which
+    engine produced the answer, per-engine candidates, timings). It is off by
+    default so the response stays minimal.
+
+    ``_engines`` restricts which engines run (used only by tests to exercise a
+    single engine in isolation).
     """
     started = time.perf_counter()
-    filtered = {k: v for k, v in engine_kwargs.items() if k in _ENGINE_KWARGS}
+    selected = [(n, fn) for n, fn in _ENGINES if _engines is None or n in _engines]
 
-    engine_error: Optional[str] = None
     # Each candidate: (assignment, objective_value, source, certificate)
-    candidates: list[tuple[Dict[str, int], float, str, VerificationCertificate]] = []
+    candidates: List[Tuple[Dict[str, int], float, str, VerificationCertificate]] = []
+    engine_details: Dict[str, str] = {}
+    proven_infeasible = False
+    proven_optimal_sources: set[str] = set()
 
-    def consider(candidate: Optional[Dict[str, int]], source: str) -> None:
-        if candidate is None:
-            return
-        cert = verify_assignment(spec, candidate)
-        if cert.all_satisfied:
-            candidates.append((candidate, cert.objective_value, source, cert))
+    for name, fn in selected:
+        outcome = fn(spec)
+        engine_details[name] = outcome.detail
+        if outcome.proven_infeasible:
+            proven_infeasible = True
+        if outcome.assignment is not None:
+            cert = verify_assignment(spec, outcome.assignment)
+            if cert.all_satisfied:
+                candidates.append((outcome.assignment, cert.objective_value, name, cert))
+                if outcome.proven_optimal:
+                    proven_optimal_sources.add(name)
 
-    # 1) Engine attempt (quantum, invisible) - skippable for fallback testing.
-    if not _force_engine_failure:
-        engine_assignment, engine_error = _try_engine(spec, filtered)
-        consider(engine_assignment, "engine")
-    else:
-        engine_error = "engine skipped (forced fallback)"
-
-    # 2) Classical solver - exact (optimal, can prove infeasibility) when small,
-    #    heuristic otherwise. Always run so small problems return the true optimum
-    #    instead of just any feasible engine sample.
-    classical = classical_solve(spec)
-    classical_notes = classical.notes
-    consider(classical.assignment, classical.method)
-    proven_infeasible = classical.assignment is None and classical.exhaustive
-
-    # 3) Pick the best verified candidate by objective sense.
     assignment: Optional[Dict[str, int]] = None
     certificate: Optional[VerificationCertificate] = None
-    engine_used = "none"
+    winning_source = "none"
     if candidates:
         maximize = spec.objective.sense == "maximize"
         best = (max if maximize else min)(candidates, key=lambda c: c[1])
-        assignment, _obj, engine_used, certificate = best
+        assignment, _obj, winning_source, certificate = best
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-    # 3) Build the response.
     if assignment is not None and certificate is not None:
-        status = "solved"
-        message = "Verified: the returned assignment satisfies every declared constraint."
+        proven = winning_source in proven_optimal_sources
+        message = (
+            "Verified: the returned assignment satisfies every declared constraint"
+            + (" (and is proven optimal)." if proven else ".")
+        )
         result = DecisionResult(
-            status=status,
+            status="solved",
             feasible=True,
             assignment=assignment,
             objective_value=certificate.objective_value,
@@ -133,7 +103,7 @@ def solve_decision(
     else:
         if proven_infeasible:
             status = "infeasible"
-            message = "No assignment can satisfy all constraints (proven by exhaustive search)."
+            message = "No assignment can satisfy all constraints (proven by CP-SAT)."
         else:
             status = "no_feasible_found"
             message = "No feasible assignment was found within the search budget."
@@ -155,13 +125,12 @@ def solve_decision(
 
     if include_diagnostics:
         result.diagnostics = {
-            "winning_source": engine_used,
+            "winning_source": winning_source,
             "sources_considered": [c[2] for c in candidates],
-            "candidates": [
-                {"source": c[2], "objective": c[1]} for c in candidates
-            ],
-            "engine_error": engine_error,
-            "classical_notes": classical_notes,
+            "candidates": [{"source": c[2], "objective": c[1]} for c in candidates],
+            "proven_optimal": winning_source in proven_optimal_sources,
+            "proven_infeasible": proven_infeasible,
+            "engine_details": engine_details,
             "elapsed_ms": round(elapsed_ms, 2),
         }
     return result

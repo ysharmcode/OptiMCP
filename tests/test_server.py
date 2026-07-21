@@ -41,12 +41,56 @@ def _structured(raw):
     return json.loads(raw[0].text)
 
 
-def test_list_tools_exposes_the_three_tools():
+CHECK_DOC = {
+    "invoice": {"subtotal": 320, "tax": 25.6, "total": 345.6},
+    "line_items": [{"amount": 100}, {"amount": 120}, {"amount": 110}],
+}
+CHECK_RULES = [
+    {
+        "id": "subtotal_matches_items",
+        "lhs": {"kind": "ref", "path": "invoice.subtotal"},
+        "op": "==",
+        "rhs": {"kind": "agg", "fn": "sum", "path": "line_items[*].amount"},
+    },
+    {
+        "id": "total_ok",
+        "lhs": {"kind": "ref", "path": "invoice.total"},
+        "op": "==",
+        "rhs": {
+            "kind": "calc",
+            "fn": "add",
+            "args": [
+                {"kind": "ref", "path": "invoice.subtotal"},
+                {"kind": "ref", "path": "invoice.tax"},
+            ],
+        },
+    },
+]
+
+
+def test_list_tools_exposes_all_tools():
     async def go():
         return await mcp.list_tools()
 
     names = {t.name for t in asyncio.run(go())}
-    assert {"solve_decision", "verify_solution", "capabilities"} <= names
+    assert {
+        "check_consistency",
+        "solve_decision",
+        "verify_solution",
+        "capabilities",
+    } <= names
+
+
+def test_check_consistency_tool_round_trip():
+    async def go():
+        return await mcp.call_tool(
+            "check_consistency", {"document": CHECK_DOC, "rules": CHECK_RULES}
+        )
+
+    report = _structured(asyncio.run(go()))
+    # subtotal (320) != sum of items (330) -> that rule is broken and named.
+    assert report["consistent"] is False
+    assert "subtotal_matches_items" in report["broken_rules"]
 
 
 def test_solve_decision_tool_round_trip():
@@ -75,10 +119,16 @@ def test_capabilities_tool():
         return await mcp.call_tool("capabilities", {})
 
     caps = _structured(asyncio.run(go()))
-    assert "binary" in caps["variable_kinds"]
-    assert caps["max_variables"] == 64
-    assert caps["exact_fallback_max_states"] == 2_000_000
-    assert set(caps["reliability_tiers"]) == {
+    assert caps["primary_tool"] == "check_consistency"
+    cc = caps["check_consistency"]
+    assert set(cc["expression_kinds"]) == {"lit", "ref", "agg", "calc"}
+    assert "sum" in cc["aggregations"]
+    assert "pct_change" in cc["arithmetic"]
+    sd = caps["solve_decision"]
+    assert "binary" in sd["variable_kinds"]
+    assert sd["max_variables"] == 64
+    assert sd["engines"] == ["cp-sat", "simulated-annealing"]
+    assert set(sd["reliability_tiers"]) == {
         "verified_feasible",
         "exact_optimum",
         "heuristic",

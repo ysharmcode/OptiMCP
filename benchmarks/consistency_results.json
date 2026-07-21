@@ -1,0 +1,95 @@
+{
+  "false_positive_audit": {
+    "total": 1200,
+    "false_positives": 0,
+    "per_category": {
+      "invoice": [
+        0,
+        200
+      ],
+      "budget": [
+        0,
+        200
+      ],
+      "growth": [
+        0,
+        200
+      ],
+      "crossfoot": [
+        0,
+        200
+      ],
+      "longctx": [
+        0,
+        200
+      ],
+      "perturbed": [
+        0,
+        200
+      ]
+    },
+    "offenders": []
+  },
+  "llm": {
+    "model": "gemini-flash-lite-latest",
+    "n": 20,
+    "scenarios": {
+      "invoice": {
+        "category": "multivariate",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 0,
+        "rate_pct": 0.0,
+        "top_broken": {}
+      },
+      "budget": {
+        "category": "multivariate",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 0,
+        "rate_pct": 0.0,
+        "top_broken": {}
+      },
+      "growth": {
+        "category": "derived",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 0,
+        "rate_pct": 0.0,
+        "top_broken": {}
+      },
+      "crossfoot": {
+        "category": "multivariate",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 0,
+        "rate_pct": 0.0,
+        "top_broken": {}
+      },
+      "longctx": {
+        "category": "long-context",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 20,
+        "rate_pct": 100.0,
+        "top_broken": {
+          "total_correct": 20,
+          "avg_correct": 20
+        }
+      },
+      "perturbed": {
+        "category": "perturbed",
+        "runs": 20,
+        "parse_fail": 0,
+        "self_violations": 0,
+        "rate_pct": 0.0,
+        "top_broken": {}
+      }
+    },
+    "overall": {
+      "violations": 20,
+      "evaluated": 120,
+      "rate_pct": 16.7
+    }
+  }
+}

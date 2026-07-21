@@ -1,10 +1,10 @@
 """Independent constraint verification.
 
-Deliberately re-implemented here from the raw :class:`DecisionSpec` (no imports
-of QBridge's internal decoder), so the "this answer satisfies your constraints"
-certificate is computed by a second, independent code path from the one that
-produced the answer. That independence is the whole point: it is what an LLM's
-own reasoning cannot provide.
+Deliberately computed here straight from the raw :class:`DecisionSpec`, with no
+dependency on any solver's internals, so the "this answer satisfies your
+constraints" certificate comes from a second, independent code path from the one
+that produced the answer. That independence is the whole point: it is what an
+LLM's own reasoning cannot provide.
 """
 
 from __future__ import annotations

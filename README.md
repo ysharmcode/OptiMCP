@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>OptiMCP</strong> — a decision engine that can't lie about the constraints
+  <strong>OptiMCP</strong> — a consistency checker that can't lie about the numbers
 </p>
 
 <p align="center">
@@ -9,27 +9,32 @@
   <img alt="MCP" src="https://img.shields.io/badge/MCP-compatible-8A2BE2.svg">
 </p>
 
-**Give any AI agent (Claude, GPT, LangChain, …) a tool that turns "here's a decision under these constraints" into a verified, constraint-satisfying answer — instead of an LLM confidently blowing a budget or double-booking a resource.**
+**Give any AI agent (Claude, GPT, LangChain, …) a tool that checks whether its own structured output actually obeys the rules — and *provably tells you which rule broke*, with the computed value, the expected value, and the delta.**
 
-LLM agents are good at *proposing* decisions and bad at *guaranteeing* them. Ask one to pick projects under a budget, staff shifts without leaving a gap, or build a portfolio under a diversification rule, and it will hand you an answer that sometimes quietly violates the very constraint you told it about. OptiMCP is a tool you plug into the agent: it takes the decision as **structured data**, solves it deterministically, and then **independently re-verifies** the answer against those constraints before returning it.
+LLMs are fluent but structurally bad at *preserving arithmetic and logical invariants*. They read a single number fine, then fall apart the moment several numbers have to combine under a rule: a total that doesn't match its line items, a growth rate computed with the wrong sign, an allocation that doesn't add up to the budget, a table that doesn't cross-foot. Worse, a model **cannot reliably audit its own arithmetic** — the same machinery that made the mistake is the one you'd be asking to catch it.
 
-There is **no LLM inside OptiMCP**. The agent fills a structured schema; the mapping from that schema to a checked answer is deterministic. The optimization engine underneath is invisible plumbing — you never need any special vocabulary to use the tool.
+OptiMCP is the independent auditor. You hand `check_consistency` a JSON document and a set of **declared rules**, and it recomputes every rule from scratch — **no LLM, exact decimal arithmetic** — then reports exactly which rules held, which broke (with the delta), and which couldn't even be evaluated. It never silently skips a rule, and it never crashes on bad data.
 
 ```mermaid
-flowchart TB
-  subgraph agent [Your agent]
-    LLM[LLM decides it needs a verified answer] --> Spec[Fills structured DecisionSpec]
-  end
-  subgraph  
-    Spec --> Build[OptiMCP tool]
-    Build --> Engine[Optimization engine]
-    Build --> Classical[Classical exact / heuristic]
-    Engine --> Verify[Independent verifier]
-    Classical --> Verify
-    Verify --> Best[Best verified answer + certificate]
-  end
-  Best --> LLM2[Agent gets a constraint-satisfying answer]
+flowchart LR
+  Agent["LLM / agent"] -->|"document + declared rules"| Check["check_consistency"]
+  Check --> Eval["Deterministic evaluator (Decimal, no LLM)"]
+  Eval --> Report["Report: which rule broke, computed vs expected, delta"]
+  Report -.->|"if broken and linear"| Solve["solve_decision (optional repair)"]
 ```
+
+---
+
+## Why this exists
+
+A 2025–2026 research thread has converged on a clear, uncomfortable finding: LLMs operate as probabilistic next-token predictors, not arithmetic engines — they *simulate the syntax of calculation without preserving its mathematical invariants*. Concretely:
+
+- **Accuracy collapses exactly where it matters.** Benchmarks show top models scoring ~95%+ on single-number lookups but falling toward **near-zero on multivariate calculations** — the moment several numbers must be combined under a rule (the "does this total match its line items?" mode).
+- **Models can't be their own auditor.** LLMs cannot reliably detect their own reasoning errors, which is the whole justification for an *independent* verifier rather than an LLM-judge.
+- **The errors are structural, not noise.** Mechanistic work frames the classic "revenue fell 50→30, model says +50% instead of −40%" as a *systematically broken computational circuit*, not an occasional slip.
+- **In deterministic domains, "mostly right" is worthless.** One wrong number invalidates a whole report for a human reviewer — a 99% per-figure accuracy can mean ~0% operational trust. That is why a hard *verify-or-refuse* layer has real value.
+
+This isn't finance-only. Anywhere an agent emits **numbers or facts subject to rules** — reporting, compliance, operations, scheduling, invoicing, analytics — the same reliability gap applies. OptiMCP is the deterministic external check that closes it.
 
 ---
 
@@ -37,14 +42,15 @@ flowchart TB
 
 | You want… | OptiMCP gives you… |
 |---|---|
-| An answer that actually respects the constraints | `solve_decision(spec)` → independently verified assignment |
-| To check the agent's *own* proposed answer | `verify_solution(spec, assignment)` → per-constraint certificate |
-| Zero quantum knowledge required | Quantum stays invisible; the schema is plain variables/objective/constraints |
-| Reliability even when the solver struggles | Classical exact/heuristic fallback; best verified answer wins |
-| Deterministic, auditable tool behavior | No LLM inside; same spec → same answer |
+| To catch output that violates its own stated rules | `check_consistency(document, rules)` → exactly which rule broke, with the delta |
+| A check an LLM cannot fake | No LLM inside; every number recomputed independently in exact `Decimal` |
+| To never be lied to by silence | A rule it can't evaluate (missing/non-numeric field) is reported as **failed**, never skipped |
+| Real arithmetic, not float slop | `Decimal` end-to-end — money, tax and % chains don't drift |
+| To catch derived-value mistakes | `pct_change`, ratios, margins, aggregations over arrays, cross-footing |
 | To wire it into any stack | MCP server, OpenAI/Anthropic function schema, LangChain tool |
+| A corrected answer when it makes sense | `solve_decision` — an optional repair/optimization engine for linear numeric problems |
 
-OptiMCP is **not** a general planner or an LLM wrapper. It is a **constraint-solving tool with an independent verification layer**. The guarantee is **constraint satisfaction (independently verified)** — not global optimality (except on the exact tier, below).
+OptiMCP is **not** an LLM wrapper or a general planner. It is a **deterministic checker with an independent-verification core**. The guarantee is that the verdict for each rule is computed correctly and independently — not that your rules capture everything you *meant* (see [What "guaranteed" means](#what-guaranteed-means-honestly)).
 
 ---
 
@@ -53,13 +59,13 @@ OptiMCP is **not** a general planner or an LLM wrapper. It is a **constraint-sol
 1. [Install](#install)
 2. [60-second quickstart](#60-second-quickstart)
 3. [Add it to your agent](#add-it-to-your-agent)
-4. [The decision spec](#the-decision-spec)
-5. [The result payload](#the-result-payload)
-6. [Verify an answer the agent already has](#verify-an-answer-the-agent-already-has)
+4. [The rule language](#the-rule-language)
+5. [The report payload](#the-report-payload)
+6. [What it catches (worked example)](#what-it-catches-worked-example)
 7. [How it works](#how-it-works)
-8. [Guarantees, reliability tiers & limits](#guarantees-reliability-tiers--limits)
+8. [Does it actually help? (benchmark)](#does-it-actually-help-benchmark)
 9. [What "guaranteed" means (honestly)](#what-guaranteed-means-honestly)
-10. [Does it actually help? (benchmark)](#does-it-actually-help-benchmark)
+10. [Optional: repair a broken answer](#optional-repair-a-broken-answer)
 11. [Examples](#examples)
 12. [Troubleshooting](#troubleshooting)
 13. [Repository layout](#repository-layout)
@@ -72,7 +78,7 @@ OptiMCP is **not** a general planner or an LLM wrapper. It is a **constraint-sol
 **Requirements**
 
 - Python **3.10+**
-- No GPU, no CUDA, no WSL. The default optimization engine runs on CPU on Windows/macOS/Linux; if it isn't present, an exact/heuristic classical solver is used instead.
+- The checker itself is pure Python + Pydantic. The optional repair engine uses Google OR-Tools CP-SAT and D-Wave `dwave-samplers` — pure-CPU wheels that install automatically from PyPI on Windows/macOS/Linux. No GPU, no CUDA, no WSL.
 
 **PyPI**
 
@@ -83,8 +89,7 @@ pip install optimcp
 **Extras**
 
 ```bash
-pip install "optimcp[qokit]"      # accelerated optimization engine (recommended; CPU, cross-platform)
-pip install "optimcp[langchain]"  # LangChain StructuredTool adapter
+pip install "optimcp[langchain]"  # LangChain StructuredTool adapters
 pip install "optimcp[dev]"        # pytest for the test suite
 ```
 
@@ -100,16 +105,47 @@ This installs:
 
 | Command / module | Purpose |
 |---|---|
-| `optimcp` | Launches the MCP stdio server (`solve_decision`, `verify_solution`, `capabilities`) |
-| `import optimcp` | `solve_decision`, `verify_assignment`, spec/result models |
+| `optimcp` | Launches the MCP stdio server (`check_consistency`, `solve_decision`, `verify_solution`, `capabilities`) |
+| `import optimcp` | `check_consistency`, `Rule`, `Ruleset`, report models (and the solver API) |
 | `optimcp.schemas` | OpenAI / Anthropic function-tool JSON schema export |
-| `optimcp.adapters.langchain` | LangChain `StructuredTool` wrapper |
+| `optimcp.adapters.langchain` | LangChain `StructuredTool` wrappers |
 
 ---
 
 ## 60-second quickstart
 
-**1. As an MCP server (Claude Desktop, Cursor, any MCP client).** The `optimcp` command speaks MCP over stdio. Add it to your client config (see [`examples/mcp_config.json`](examples/mcp_config.json)):
+**Call it directly in Python:**
+
+```python
+from optimcp import check_consistency
+
+# A document an LLM produced (an invoice). Two numbers are wrong.
+invoice = {
+    "line_items": [{"amount": 100}, {"amount": 120}, {"amount": 110}],
+    "subtotal": 320,        # WRONG: the items sum to 330
+    "tax": 25.6,
+    "total": 345.6,         # WRONG vs subtotal + tax
+}
+
+rules = [
+    {"id": "subtotal_foots",
+     "lhs": {"kind": "ref", "path": "subtotal"}, "op": "==",
+     "rhs": {"kind": "agg", "fn": "sum", "path": "line_items[*].amount"}},
+    {"id": "total_correct",
+     "lhs": {"kind": "ref", "path": "total"}, "op": "==",
+     "rhs": {"kind": "calc", "fn": "add",
+             "args": [{"kind": "ref", "path": "subtotal"},
+                      {"kind": "ref", "path": "tax"}]}},
+]
+
+report = check_consistency(invoice, rules)
+print(report.consistent)      # False
+print(report.broken_rules)    # ['subtotal_foots']
+print(report.summary)
+# 1 of 2 rule(s) VIOLATED: subtotal_foots: 320 == 330: VIOLATED (off by 10)
+```
+
+**Or as an MCP server (Claude Desktop, Cursor, any MCP client).** The `optimcp` command speaks MCP over stdio. Add it to your client config (see [`examples/mcp_config.json`](examples/mcp_config.json)):
 
 ```json
 {
@@ -119,363 +155,228 @@ This installs:
 }
 ```
 
-Your agent now has three tools: `solve_decision`, `verify_solution`, `capabilities`.
-
-**2. Or call it directly in Python:**
-
-```python
-from optimcp.solve import solve_decision
-from optimcp.spec import DecisionSpec
-
-spec = DecisionSpec.model_validate({
-    "variables": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
-    "objective": {"sense": "maximize", "terms": [
-        {"vars": ["a"], "coeff": 60}, {"vars": ["b"], "coeff": 40}, {"vars": ["c"], "coeff": 35},
-    ]},
-    "constraints": [{"name": "budget", "op": "<=", "rhs": 100, "terms": [
-        {"vars": ["a"], "coeff": 55}, {"vars": ["b"], "coeff": 45}, {"vars": ["c"], "coeff": 50},
-    ]}],
-})
-
-result = solve_decision(spec)
-print(result.status)            # "solved"
-print(result.assignment)        # {"a": 1, "b": 1, "c": 0}
-print(result.objective_value)   # 100.0
-print(result.verification.constraint_checks[0].detail)  # "budget: 100 <= 100: satisfied"
-```
-
-`status == "solved"` means the assignment was independently re-checked against the budget before it was returned.
+Your agent now has: `check_consistency`, `solve_decision`, `verify_solution`, `capabilities`.
 
 ---
 
 ## Add it to your agent
 
-### MCP (Claude Desktop / Cursor / local agents)
-
-Use the config above. The server exposes the tools over stdio; no ports, no keys. Optional HTTP transports:
-
-```bash
-optimcp --transport streamable-http   # or: sse
-```
-
 ### OpenAI / Anthropic function calling
 
 ```python
-from optimcp.schemas import openai_tool, anthropic_tool
-from optimcp.solve import solve_decision
-from optimcp.spec import DecisionSpec
+from optimcp.schemas import openai_tool, anthropic_tool   # -> check_consistency
+from optimcp import check_consistency
 
 tools = [openai_tool()]           # or [anthropic_tool()]
 
 def dispatch(name, arguments):    # call this from your tool-call loop
-    if name == "solve_decision":
-        return solve_decision(DecisionSpec.model_validate(arguments)).model_dump()
+    if name == "check_consistency":
+        return check_consistency(arguments["document"], arguments["rules"]).model_dump()
 ```
 
-Full, runnable example (a live model calls the tool to avoid overspending): [`examples/openai_function_calling.py`](examples/openai_function_calling.py).
+Full, runnable example (a live model drafts an invoice, OptiMCP audits its arithmetic): [`examples/check_consistency.py`](examples/check_consistency.py).
 
 ### LangChain / LangGraph
 
 ```python
-from optimcp.adapters.langchain import build_langchain_tool
+from optimcp.adapters.langchain import build_check_consistency_tool
 
-tool = build_langchain_tool()     # a StructuredTool; pass to your agent's tools=[...]
+tool = build_check_consistency_tool()   # a StructuredTool; pass to tools=[...]
 ```
 
-Full example (a live model calls the tool on a schedule-coverage decision): [`examples/langchain_agent.py`](examples/langchain_agent.py). Requires `pip install "optimcp[langchain]"`.
+Requires `pip install "optimcp[langchain]"`.
 
 ---
 
-## The decision spec
+## The rule language
 
-A decision has the shape:
+A **rule** asserts `lhs <op> rhs` (within tolerance), where each side is an **expression** over the document. Rules are pure data — no natural language, no LLM — which is exactly what makes the verdict deterministic.
 
-```text
-maximize / minimize   sum(coeff · x_i [· x_j])            (objective)
-subject to            sum(coeff · x_i [· x_j])  <op>  rhs  (each constraint)
-```
+### Operators
 
-over binary or bounded-integer variables. Terms are degree ≤ 2 (linear or quadratic).
+`==` `!=` `<=` `>=` `<` `>` — compared in exact `Decimal` arithmetic with a per-rule tolerance (`abs_tol` default `1e-6`, plus optional `rel_tol` × |rhs|).
 
-### Variables (`VariableSpec`)
+### Expressions (`Expr`)
 
-| Field | Type | Notes |
+| `kind` | Fields | Meaning |
 |---|---|---|
-| `name` | str | Unique, case-sensitive identifier used by terms |
-| `kind` | `"binary"` \| `"integer"` | Binary = 0/1; integer = bounded count |
-| `lb`, `ub` | int | **Required** for integer variables; `lb ≤ ub` |
-| `description` | str? | Optional human-readable meaning |
+| `lit` | `value` | A literal number |
+| `ref` | `path` | One field, by path: `"invoice.total"`, `"line_items[0].amount"` |
+| `agg` | `fn`, `path` | Aggregate over a wildcard path: `sum`/`avg`/`min`/`max`/`count` of `"line_items[*].amount"` |
+| `calc` | `fn`, `args` | Arithmetic over sub-expressions |
+
+**`calc` functions:** `add`, `sub`, `mul`, `div`, `neg`, `abs`, `round` (2nd arg literal), `pow`, and `pct_change(old, new)` = `(new − old) / old × 100`.
+
+### Paths
+
+Dot paths with `[i]` indexing and `[*]` wildcards. Wildcards may branch: `rows[*][0]` collects the first cell of every row (useful for column totals). Wildcards are only allowed inside an `agg` path.
+
+### A rule, fully spelled out
 
 ```python
-{"name": "fund_alpha", "kind": "binary"}
-{"name": "trucks", "kind": "integer", "lb": 0, "ub": 5}
-```
-
-### Terms (`Term`)
-
-| Field | Type | Notes |
-|---|---|---|
-| `vars` | list[str] | 1 name (linear) or 2 names (quadratic) |
-| `coeff` | float | Coefficient; defaults to `1.0` |
-
-```python
-{"vars": ["a"], "coeff": 60}           # 60·a
-{"vars": ["a", "b"], "coeff": -5}      # -5·a·b   (quadratic)
-```
-
-### Objective (`ObjectiveSpec`)
-
-| Field | Type | Notes |
-|---|---|---|
-| `sense` | `"maximize"` \| `"minimize"` | Direction |
-| `terms` | list[Term] | Empty ⇒ "any feasible answer" |
-
-### Constraints (`ConstraintSpec`)
-
-| Field | Type | Notes |
-|---|---|---|
-| `terms` | list[Term] | Left-hand side (a sum of terms) |
-| `op` | one of `<=` `>=` `==` `!=` `<` `>` | Comparison |
-| `rhs` | float | Right-hand side constant |
-| `name` | str? | Echoed back in the certificate |
-| `description` | str? | Optional meaning |
-
-> **Model `==` deliberately.** "Exactly one per shift" / "hold exactly 3 assets" is an **equality** (`==`), not `<=`. OptiMCP verifies the operator you write — see [What "guaranteed" means](#what-guaranteed-means-honestly).
-
-### Validation & limits
-
-The spec is validated up front; bad specs are **rejected**, never silently coerced:
-
-- unique variable names; every term references a declared variable;
-- integer variables must carry `lb`/`ub` with `lb ≤ ub`;
-- term degree ≤ 2 (cubic+ rejected);
-- at most **64 variables** (larger decisions should be decomposed).
-
----
-
-## The result payload
-
-`solve_decision` returns a `DecisionResult`:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `status` | `"solved"` \| `"infeasible"` \| `"no_feasible_found"` | Outcome |
-| `feasible` | bool | True iff a verified constraint-satisfying answer is returned |
-| `assignment` | dict[str, int] | Chosen values by variable name (empty if not solved) |
-| `objective_value` | float? | Objective at the assignment |
-| `objective_sense` | str | `"maximize"` / `"minimize"` |
-| `verification` | object | Independent certificate (below) |
-| `message` | str | Human-readable summary |
-| `diagnostics` | dict? | Internals (winning source, timings); **off by default** |
-
-The `verification` certificate:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `all_satisfied` | bool | Every constraint + domain holds |
-| `objective_value` | float | Recomputed independently |
-| `constraint_checks` | list | `{name, satisfied, detail}` per constraint |
-| `domain_valid` | bool | All values within their declared domains |
-| `issues` | list[str] | Domain / unknown-variable / missing-variable problems |
-
-```json
+# "total must equal subtotal + tax"
 {
-  "status": "solved",
-  "feasible": true,
-  "assignment": {"a": 1, "b": 1, "c": 0},
-  "objective_value": 100.0,
-  "verification": {
-    "all_satisfied": true,
-    "constraint_checks": [{"name": "budget", "satisfied": true, "detail": "budget: 100 <= 100: satisfied"}],
-    "domain_valid": true, "issues": []
-  }
+  "id": "total_correct",
+  "lhs": {"kind": "ref", "path": "total"},
+  "op": "==",
+  "rhs": {"kind": "calc", "fn": "add",
+          "args": [{"kind": "ref", "path": "subtotal"},
+                   {"kind": "ref", "path": "tax"}]},
+  "abs_tol": 0.005,
+  "message": "total = subtotal + tax"
 }
 ```
 
-Statuses:
+### Numbers in strings
 
-- **`solved`** — a verified feasible answer is returned (optimal on the exact tier).
-- **`infeasible`** — no assignment can satisfy all constraints (**proven** by exhaustive search on small problems).
-- **`no_feasible_found`** — the heuristic did not find a feasible answer within budget on a large problem (one may still exist).
+Values like `"$1,200.00"`, `"(500)"` (accounting-negative), `"40%"` and `"1.2m"` are normalized to numbers — and **every non-trivial coercion is reported** in `notes`, because a silently "fixed" unit is precisely the transcription bug this tool exists to surface.
 
 ---
 
-## Verify an answer the agent already has
+## The report payload
 
-Sometimes the agent has *already* proposed an answer in text. Have it check itself before committing — this is the "can't lie" story in one call:
+`check_consistency` returns a `ConsistencyReport`:
 
-```python
-from optimcp.verify import verify_assignment
+| Field | Type | Meaning |
+|---|---|---|
+| `consistent` | bool | True iff every rule was evaluable **and** held |
+| `checks` | list[`RuleCheck`] | Per-rule verdict (below) |
+| `broken_rules` | list[str] | Ids of rules that were evaluated and **VIOLATED** |
+| `unevaluable` | list[str] | Ids of rules that couldn't be evaluated (missing/non-numeric field) |
+| `summary` | str | One-line human summary |
+| `notes` | list[str] | All string/unit coercions applied, de-duplicated |
 
-cert = verify_assignment(spec, {"a": 1, "b": 1, "c": 1})
-print(cert.all_satisfied)                    # False — spends 150 > 100
-print(cert.constraint_checks[0].detail)      # "budget: 150 <= 100: VIOLATED"
+Each `RuleCheck`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | str | The rule's id |
+| `passed` | bool | Held within tolerance |
+| `lhs_value`, `rhs_value` | float? | Independently computed sides (`None` if unevaluable) |
+| `delta` | float? | `lhs − rhs` |
+| `tolerance` | float | Effective tolerance used |
+| `detail` | str | e.g. `"total: 345.6 == 355.6: VIOLATED (off by 10)"` |
+| `missing` | list[str] | Field paths that were absent/non-numeric |
+| `error` | str? | Why the rule couldn't be evaluated |
+
+**Verify-or-refuse:** a rule that references a missing or non-numeric field is reported as `unevaluable` (and `consistent` is `False`) — never silently treated as satisfied.
+
+---
+
+## What it catches (worked example)
+
+The two failure modes the literature calls *structural* for LLMs — a wrongly-directed growth percentage and a table that doesn't cross-foot — caught deterministically ([`examples/check_financial_report.py`](examples/check_financial_report.py), no API key needed):
+
+```text
+Auditing financial report for Q3 2026 (4 rules, deterministic, no LLM)
+
+  [XX ] growth_direction: 50 == -40: VIOLATED (off by 90) - growth% = (new - old) / old * 100
+  [XX ] segments_foot_to_total: 30 == 32: VIOLATED (off by 2) - segment revenues must sum to total_revenue
+  [ok ] gross_profit_identity: 18 == 18: SATISFIED - gross_profit = total_revenue - cogs
+  [ok ] gross_margin: 60 == 60: SATISFIED - gross_margin% = gross_profit / total_revenue * 100
+
+  consistent  : False
+  broken      : ['growth_direction', 'segments_foot_to_total']
 ```
 
-The verifier is **adversarially hardened**: a miscased or missing variable is reported (never silently accepted, never a crash), fractional values on binary/integer variables are flagged, and unknown keys are surfaced as spelling/casing mistakes.
+The revenue fell 50 → 30 (−40%) but the report claimed +50% — the exact "50M to 30M answered 50%" failure — and the segment revenues (18+9+5=32) don't match the stated total of 30. Both are named, with the delta.
 
 ---
 
 ## How it works
 
-```mermaid
-flowchart LR
-  Spec[DecisionSpec] --> Build[Deterministic builder]
-  Build --> Engine["Optimization engine\n(invisible)"]
-  Build --> Classical["Classical solver\nexact ≤ 2M states · heuristic above"]
-  Engine --> V[Independent verifier]
-  Classical --> V
-  V --> Pick["Best VERIFIED answer\nby objective"]
-  Pick --> Out[DecisionResult + certificate]
-```
+1. Each rule's two sides are evaluated **independently** by a small deterministic interpreter over the JSON document. There is no LLM anywhere in this path.
+2. All arithmetic runs in Python's `decimal.Decimal` at high precision, so tax/percentage/total chains do not accumulate binary-float error.
+3. Field access is explicit and case-sensitive. A missing key, an out-of-range index, a non-numeric value, or a boolean-where-a-number-belongs makes the rule **unevaluable** — reported, never crashed, never assumed satisfied.
+4. String values are normalized (commas, currency symbols, accounting parentheses, `k`/`m`/`b` suffixes, trailing `%`) and every coercion is recorded so unit-transcription bugs surface instead of hiding.
 
-1. The structured spec is compiled deterministically into an internal optimization problem.
-2. **Two solvers run:** the built-in optimization engine and a classical solver (exact enumeration when the state space is ≤ 2,000,000, a heuristic otherwise).
-3. Every candidate is **independently re-verified** against the raw spec.
-4. The **best verified answer by objective value** is returned. On small problems this guarantees the exact optimum rather than whatever feasible sample the engine happened to produce; on large problems it returns the best verified answer found.
-
-You only ever see step 3's verdict: a feasible, verified answer — or an honest `infeasible` / `no_feasible_found` status.
-
----
-
-## Two engines, one best answer (worked example)
-
-Most solvers give you *one* algorithm's answer and trust it. OptiMCP runs **two** — a fast optimization engine and a classical exact/heuristic solver — independently verifies both, and returns the better one. Turn on diagnostics and you can watch it happen:
-
-```python
-from optimcp.solve import solve_decision
-from optimcp.spec import DecisionSpec
-
-# Pick the most valuable items that fit within a weight budget of 40.
-knapsack = DecisionSpec.model_validate({
-    "variables": [{"name": "a"}, {"name": "b"}, {"name": "c"}, {"name": "d"}],
-    "objective": {"sense": "maximize", "terms": [
-        {"vars": ["a"], "coeff": 60}, {"vars": ["b"], "coeff": 100},
-        {"vars": ["c"], "coeff": 120}, {"vars": ["d"], "coeff": 40},
-    ]},
-    "constraints": [{"name": "weight", "op": "<=", "rhs": 40, "terms": [
-        {"vars": ["a"], "coeff": 10}, {"vars": ["b"], "coeff": 20},
-        {"vars": ["c"], "coeff": 30}, {"vars": ["d"], "coeff": 15},
-    ]}],
-})
-
-result = solve_decision(knapsack, include_diagnostics=True)
-
-print(result.objective_value)               # 180.0
-print(result.diagnostics["winning_source"]) # 'exact_enumeration'
-print(result.diagnostics["candidates"])
-# [{'source': 'engine',            'objective': 100.0},
-#  {'source': 'exact_enumeration', 'objective': 180.0}]
-```
-
-Read that `candidates` list carefully — it's the whole pitch in three lines:
-
-- The fast engine, **on its own**, returned a *valid but suboptimal* answer worth **100**. It respects the weight limit, so nothing looks wrong: a tool built on that one engine would hand you 100 and call it solved.
-- The classical exact tier found the **true optimum worth 180**.
-- Because OptiMCP verifies **both** and keeps the better one, you get **180** — the single-engine answer would have quietly left **80 points of value** on the table.
-
-**It cuts the other way too — knowing when there is *no* answer:**
-
-```python
-# "Choose at least 2" and "choose at most 1" cannot both hold.
-impossible = DecisionSpec.model_validate({
-    "variables": [{"name": "x"}, {"name": "y"}],
-    "objective": {"sense": "maximize",
-                  "terms": [{"vars": ["x"], "coeff": 1}, {"vars": ["y"], "coeff": 1}]},
-    "constraints": [
-        {"name": "at_least_2", "op": ">=", "rhs": 2,
-         "terms": [{"vars": ["x"], "coeff": 1}, {"vars": ["y"], "coeff": 1}]},
-        {"name": "at_most_1", "op": "<=", "rhs": 1,
-         "terms": [{"vars": ["x"], "coeff": 1}, {"vars": ["y"], "coeff": 1}]},
-    ],
-})
-
-result = solve_decision(impossible)
-print(result.status)   # 'infeasible'
-print(result.message)  # 'No assignment can satisfy all constraints (proven by exhaustive search).'
-```
-
-A sampler-style engine never says "impossible" — it always emits *some* answer, so a single-engine tool would confidently return a constraint-violating result. OptiMCP's exact tier **proves** infeasibility instead of guessing.
-
-**Net effect: you are never worse off than the better of the two engines** — the true optimum (or a proof that none exists) on small problems, and the best verified answer found on large ones.
-
----
-
-## Guarantees, reliability tiers & limits
-
-Machine-readable via the `capabilities()` tool. In words:
-
-| Tier | When | Promise |
-|---|---|---|
-| **Verified feasible** | Always, on `status="solved"` | Answer independently re-checked to satisfy every constraint & domain |
-| **Exact optimum** | Joint state space ≤ **2,000,000** assignments | Exhaustive search returns the true optimum and can **prove** infeasibility |
-| **Heuristic** | Larger problems | Best-effort; may return `no_feasible_found` even if a feasible answer exists |
-
-| Supported | Values |
-|---|---|
-| Variable kinds | `binary`, `integer` (bounded) |
-| Objective senses | `maximize`, `minimize` |
-| Constraint operators | `<=` `>=` `==` `!=` `<` `>` |
-| Term degree | ≤ 2 (linear / quadratic) |
-| Max variables | 64 (rejected above the limit at validation time) |
-
----
-
-## What "guaranteed" means (honestly)
-
-- **Guaranteed:** the returned answer satisfies every constraint and variable domain **as encoded in the spec**, checked by an **independent verifier** — a separate code path from the one that produced the answer.
-- **Scope of the guarantee:** it covers the constraints the agent *wrote down*, not the ones it *meant*. If a model encodes "exactly one" as `<=` instead of `==`, OptiMCP faithfully verifies the weaker rule. The certificate echoes every constraint back (e.g. `coverage: 1 <= 1`) precisely so a human or agent can confirm the encoding matches intent. Use `verify_solution` and the echoed certificate as the checkpoint.
-- **Not claimed:** global optimality in general. OptiMCP returns a *good, feasible* answer; on the exact tier it is the true optimum, but for large problems "the single best" is not promised.
-- **Quantum:** invisible plumbing. Whether the answer came from the quantum engine or the classical solver, it is the same verified result; the default response contains no quantum vocabulary (`include_diagnostics=True` exposes internals).
+That independence is the whole point: it is the check an LLM's own reasoning cannot provide for itself.
 
 ---
 
 ## Does it actually help? (benchmark)
 
-We measured whether the tool actually changes outcomes, rather than assuming it. A capable-but-imperfect model (`gpt-4o-mini`, N=8, `temperature=0.7`) runs each scenario **with the tool absent** (reason alone) and **with the tool present**, scored against ground truth (recomputed by exact enumeration) for constraint violations. The battery spans budget / scheduling / portfolio decisions and includes deliberate **traps**.
+Two things measured separately, and reported honestly.
 
-The result is nuanced and reported honestly — the tool is not a blanket win. **The percentages below are provisional (N=8);** the patterns are robust but the exact numbers should be re-measured at N≥20 before being treated as final:
+**1. Is the checker trustworthy?** We generate **1200 known-correct documents** across six scenario types and check them. A correct document must produce zero violations:
 
-| Scenario | Trap | No-tool feasible | With-tool feasible | Verdict |
-|---|:---:|:---:|:---:|---|
-| budget_easy / scheduling_easy / portfolio_easy | – | 100% | 100% | **No effect** — the model already nails easy cases |
-| scheduling_trap (`== coverage`) | ✓ | 100% | 100% | No effect here |
-| portfolio_trap (`== 3` cardinality) | ✓ | 87.5% | **100%** | **Tool helps** — enforces a constraint the model drops |
-| budget_trap | ✓ | 100% | **25%** | **Tool hurts** — model mis-serializes units ($k vs $) into the spec |
+| Known-correct documents checked | False positives |
+|---:|---:|
+| **1200** | **0** |
 
-Three honest takeaways:
+**2. Does a capable model emit self-inconsistent numbers — and where?** A capable model (`gemini-flash-lite-latest`, N=20 per scenario, 120 generations) produces structured output; the checker measures how often that output breaks its own stated rules:
 
-1. **On simple decisions a capable model already gets right, the tool adds nothing.** The value is *not* "matters on any budget question" — it's "matters as the constraint structure gets harder to hold in your head."
-2. **Where the model tends to forget a constraint (cardinality/coverage), the tool helps** by enforcing it by construction.
-3. **Structuring a problem for the tool can introduce errors free-form reasoning avoids** — here, the model wrote costs in "$k" but the budget in full dollars, so the tool faithfully solved the wrong (unbounded) budget. The guarantee is only as good as the encoding; use `verify_solution` and read the echoed certificate.
+| Scenario | Category | Self-violation rate |
+|---|---|:---:|
+| invoice / budget / crossfoot | multivariate | **0%** (0/60) |
+| growth | derived | **0%** (0/20) |
+| perturbed income statement | perturbed | **0%** (0/20) |
+| **long-context aggregation** (sum ~24 amounts buried in a long log) | long-context | **100%** (20/20) |
 
-Full methodology, per-scenario numbers, and root-cause analysis:
-[`benchmarks/AGENT_TOOL_BENCHMARK.md`](benchmarks/AGENT_TOOL_BENCHMARK.md).
+The finding is specific and honest: **on short, self-contained tasks a capable model is reliable** — OptiMCP doesn't pretend otherwise. But the moment it has to **aggregate many numbers scattered through a long context**, it gets the total wrong *every single time* (while still counting the items and finding the max correctly — it can *see* the data, it just can't reliably *combine* it). That is exactly the "collapses on multivariate calculation under context" mode the research describes, and it is precisely what the model **cannot self-detect**. The deterministic checker catches 100% of these with 0 false positives — that gap is the product.
 
-Reproduce it yourself:
+Full methodology and numbers: [`benchmarks/CONSISTENCY_BENCHMARK.md`](benchmarks/CONSISTENCY_BENCHMARK.md). Reproduce:
 
 ```bash
-pip install "optimcp[langchain]" openai
-setx OPENROUTER_API_KEY sk-or-...        # or OPENAI_API_KEY
-python benchmarks/agent_benchmark.py --n 8
+# deterministic false-positive audit (no API key):
+python benchmarks/consistency_benchmark.py --fp-only
+
+# full run (LLM self-violation + FP audit):
+setx GEMINI_API_KEY ...     # or OPENROUTER_API_KEY / OPENAI_API_KEY
+python benchmarks/consistency_benchmark.py
 ```
 
-Full methodology, per-scenario numbers, and an honest reading (including the boring/negative findings) are in
-[`benchmarks/AGENT_TOOL_BENCHMARK.md`](benchmarks/AGENT_TOOL_BENCHMARK.md). Harness:
-[`benchmarks/agent_benchmark.py`](benchmarks/agent_benchmark.py); scenarios:
-[`benchmarks/scenarios.py`](benchmarks/scenarios.py).
+---
+
+## What "guaranteed" means (honestly)
+
+- **Guaranteed:** for each rule, the verdict (held / violated / unevaluable) is computed **correctly and independently** of whatever produced the document, in exact arithmetic. A false "consistent" cannot come from float drift, a silently skipped rule, or a missing field.
+- **Scope:** the checker verifies the rules you *wrote down*, not the ones you *meant*. If you forget to declare "segments must sum to total," it won't invent it. Declare the invariants that matter; the report echoes each one back.
+- **Not claimed:** that your ruleset is complete, or that a `consistent` document is "correct" in some larger sense — only that it satisfies the stated rules.
+- **False positives:** the checker is audited against known-correct documents and flags zero of them (see the benchmark). It errs toward *reporting* problems (unevaluable rules count as failures), never toward hiding them.
+
+---
+
+## Optional: repair a broken answer
+
+Detecting the break is the product. Sometimes you also want a corrected answer. When (and only when) your rules are **linear over scalar fields**, OptiMCP can reduce them to a solvable spec and hand it to a solver that returns an independently-verified fix:
+
+```python
+from optimcp.check.rules import Ruleset, Rule
+from optimcp.check.repair import try_repair
+
+rules = Ruleset(rules=[
+    Rule.model_validate({"id": "sum", "op": "==", "rhs": {"kind": "lit", "value": 10},
+        "lhs": {"kind": "calc", "fn": "add",
+                "args": [{"kind": "ref", "path": "a"}, {"kind": "ref", "path": "b"}]}}),
+    Rule.model_validate({"id": "diff", "op": "==", "rhs": {"kind": "lit", "value": 2},
+        "lhs": {"kind": "calc", "fn": "sub",
+                "args": [{"kind": "ref", "path": "a"}, {"kind": "ref", "path": "b"}]}}),
+])
+
+# You supply the variable domains + what to optimize (the rules alone don't say).
+fixed = try_repair(
+    rules,
+    variables=[{"name": "a", "kind": "integer", "lb": 0, "ub": 10},
+               {"name": "b", "kind": "integer", "lb": 0, "ub": 10}],
+    objective={"sense": "maximize", "terms": [{"vars": ["a"]}]},
+)
+print(fixed.assignment)   # {'a': 6, 'b': 4}   (a+b=10, a-b=2), independently verified
+```
+
+Anything outside the linear-scalar subset (aggregations, division by a variable, products of two fields) returns `None` — OptiMCP reports the violation and refuses to guess. The underlying solver runs two independent engines (OR-Tools CP-SAT for exact answers, D-Wave simulated annealing for a second opinion) and re-verifies every candidate; `solve_decision` / `verify_solution` remain available directly for classic decision problems.
 
 ---
 
 ## Examples
 
-| File | Scenario | Shows |
-|---|---|---|
-| [`examples/mcp_config.json`](examples/mcp_config.json) | MCP registration | One-line client config |
-| [`examples/openai_function_calling.py`](examples/openai_function_calling.py) | Budget allocation | A live model calls the tool to avoid overspending |
-| [`examples/langchain_agent.py`](examples/langchain_agent.py) | Shift coverage (`==`) | A live LangChain model gets a verified answer only correct under `==` |
+| File | Shows |
+|---|---|
+| [`examples/check_consistency.py`](examples/check_consistency.py) | A live model drafts an invoice; OptiMCP audits its multivariate arithmetic |
+| [`examples/check_financial_report.py`](examples/check_financial_report.py) | Catching a wrong growth % and a cross-footing error (no API key) |
+| [`examples/mcp_config.json`](examples/mcp_config.json) | One-line MCP client registration |
 
-The runnable examples work with either an `OPENAI_API_KEY` or an `OPENROUTER_API_KEY` (OpenRouter is OpenAI-compatible); set `OPTIMCP_MODEL` to override the model.
+The live example works with an `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`; set `OPTIMCP_MODEL` to override the model.
 
 ---
 
@@ -483,14 +384,13 @@ The runnable examples work with either an `OPENAI_API_KEY` or an `OPENROUTER_API
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `status="no_feasible_found"` on a big problem | Heuristic tier couldn't find a feasible point | Shrink/decompose the problem so it hits the exact tier (≤ 2M states) |
-| `status="infeasible"` unexpectedly | Constraints genuinely conflict (proven) | Re-check the `==`/`<=` operators and `rhs` values |
-| `all_satisfied=False` with `unknown variable 'X'` | Miscased/typo'd name in a proposed assignment | Use exact, case-sensitive variable names |
-| Validation error: "too many variables" | > 64 variables | Decompose into sub-decisions |
-| Validation error: integer "requires both lb and ub" | Integer variable missing bounds | Add `lb`/`ub` |
-| Answer feasible but not what you meant | Spec encodes the wrong rule (e.g. `<=` vs `==`) | Read the echoed certificate; fix the operator in the spec |
-| MCP client shows no tools | Server not launched / wrong command | Ensure `optimcp` is on PATH; test with `optimcp --help` |
-| LLM never calls the tool | Weak system prompt | Instruct the model to use `solve_decision` for hard numeric constraints |
+| Rule shows up in `unevaluable` | A referenced field is missing, miscased, or non-numeric | Fix the `path` (case-sensitive) or the document; check `RuleCheck.error` |
+| `consistent=False` but you expected pass | A real violation — read `broken_rules` and the per-rule `detail`/`delta` | Trust it; the arithmetic is independent |
+| A coercion note you didn't expect | A value was a string like `"$1,200"` and got normalized | Confirm the intended unit; emit numbers, not strings, if possible |
+| `pct_change` rule is unevaluable | Base (`old`) is zero → undefined | Guard the case or use a different rule |
+| `division by zero` error on a rule | `div`/ratio with a zero denominator | Handle the zero case in your rules |
+| Validation error on a rule | Malformed `Expr` (e.g. `agg` path without `[*]`, wrong arity) | See [The rule language](#the-rule-language) |
+| MCP client shows no tools | Server not launched / wrong command | Ensure `optimcp` is on PATH; test `optimcp --help` |
 
 ---
 
@@ -502,21 +402,25 @@ OptiMCP/
   LICENSE                   Business Source License 1.1
   README.md                 This file
   src/optimcp/
-    spec.py                 DecisionSpec + validation (the whole input contract)
-    builder.py              Deterministic DecisionSpec -> optimization problem
-    verify.py               Independent constraint/domain verifier (trust anchor)
-    classical.py            Exact enumeration + heuristic reliability backbone
-    solve.py                Orchestrator: engine + classical, verify, best wins
+    check/
+      rules.py              Rule language: Expr AST, Rule, Ruleset (validated)
+      paths.py              Deterministic path resolver (., [i], [*])
+      eval.py               Decimal evaluator; verify-or-refuse; coercion notes
+      result.py             RuleCheck / ConsistencyReport models
+      repair.py             Optional: linear rules -> DecisionSpec -> solver fix
+      __init__.py           check_consistency() entry point
+    spec.py                 DecisionSpec + validation (solver input contract)
+    verify.py               Independent constraint/domain verifier (solver side)
+    solve.py                Solver orchestrator: two engines, verify, best wins
+    engines/                CP-SAT (exact) + simulated annealing (heuristic)
     result.py               DecisionResult / VerificationCertificate models
-    server.py               FastMCP server (solve_decision, verify_solution, capabilities)
+    server.py               FastMCP server (check_consistency + solver tools)
     schemas.py              OpenAI / Anthropic function-tool schema export
-    adapters/langchain.py   LangChain StructuredTool wrapper
-  examples/                 MCP config + runnable OpenAI / LangChain agents
-  benchmarks/               Agent tool benchmark (harness, scenarios, results)
-  tests/                    Spec / builder / verify / solve / server tests
+    adapters/langchain.py   LangChain StructuredTool wrappers
+  examples/                 Consistency-check demos + MCP config
+  benchmarks/               Consistency benchmark (harness, results, writeup)
+  tests/                    check / paths / repair / spec / verify / solve / server
 ```
-
-OptiMCP wraps a fast optimization engine (installed automatically from PyPI) with a structured decision spec and an independent verification layer.
 
 ---
 

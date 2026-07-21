@@ -12,7 +12,7 @@ A problem has the shape::
     subject to            sum(coeff * x_i [* x_j])  <op>  rhs      (per constraint)
 
 over binary or bounded-integer variables. Terms are degree <= 2 (linear or
-quadratic), which is what maps cleanly onto the QUBO the engine solves.
+quadratic), which both engines (CP-SAT and simulated annealing) handle directly.
 """
 
 from __future__ import annotations

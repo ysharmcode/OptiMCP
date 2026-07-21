@@ -5,14 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "optimcp"
 version = "0.1.0"
-description = "A decision engine that can't lie about the constraints - an MCP / function-calling tool that returns verified, constraint-satisfying answers for AI agents"
+description = "A consistency checker that can't lie about the numbers - an MCP / function-calling tool that tells AI agents exactly which rule their structured output broke"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "BUSL-1.1"
-authors = [{name = "QBridge contributors"}]
-keywords = ["mcp", "agent", "tools", "optimization", "constraints", "function-calling", "llm"]
+authors = [{name = "OptiMCP contributors"}]
+keywords = ["mcp", "agent", "tools", "verification", "consistency", "hallucination", "function-calling", "llm"]
 dependencies = [
-    "qbridge>=0.5.1",
+    "ortools>=9.10",
+    "dwave-samplers>=1.3",
+    "dimod>=0.12",
     "mcp>=1.2.0",
     "pydantic>=2.6",
 ]
@@ -26,7 +28,6 @@ Issues = "https://github.com/ProfessionalQwerty/OptiMCP/issues"
 optimcp = "optimcp.server:main"
 
 [project.optional-dependencies]
-qokit = ["qbridge[qokit]>=0.5.1"]
 langchain = ["langchain-core>=0.3"]
 dev = ["pytest>=7.0"]
 

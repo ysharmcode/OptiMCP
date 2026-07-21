@@ -46,11 +46,19 @@ def test_solve_finds_optimum_on_small_instance():
     assert result.objective_value == 100
 
 
-def test_forced_fallback_still_solves():
-    # Skip the engine entirely; the classical backbone must still return verified.
-    result = solve_decision(BUDGET_SPEC, _force_engine_failure=True)
+def test_annealer_alone_still_solves():
+    # The heuristic engine on its own must still return a verified-feasible answer.
+    result = solve_decision(BUDGET_SPEC, _engines=("simulated-annealing",))
     assert result.status == "solved"
     assert result.verification.all_satisfied
+
+
+def test_cpsat_alone_proves_optimum():
+    # CP-SAT on its own reaches the true optimum and flags it as proven.
+    result = solve_decision(BUDGET_SPEC, _engines=("cp-sat",), include_diagnostics=True)
+    assert result.status == "solved"
+    assert result.objective_value == 100
+    assert result.diagnostics["proven_optimal"] is True
 
 
 def test_infeasible_spec_reported_honestly():

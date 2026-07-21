@@ -39,7 +39,7 @@ from openai import OpenAI
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scenarios import SCENARIOS, Scenario  # noqa: E402
 
-from optimcp.classical import classical_solve  # noqa: E402
+from optimcp.engines.cpsat import solve_cpsat  # noqa: E402
 from optimcp.schemas import openai_tool  # noqa: E402
 from optimcp.solve import solve_decision  # noqa: E402
 from optimcp.spec import DecisionSpec  # noqa: E402
@@ -91,11 +91,12 @@ class GroundTruth:
 
 
 def ground_truth(scenario: Scenario) -> GroundTruth:
+    # CP-SAT is exact: its answer is the provable optimum (ideal ground truth).
     spec = DecisionSpec.model_validate(scenario.true_spec)
-    res = classical_solve(spec)
-    if res.assignment is None:
+    out = solve_cpsat(spec)
+    if out.assignment is None:
         return GroundTruth(optimum=float("nan"), feasible_exists=False)
-    cert = verify_assignment(spec, res.assignment)
+    cert = verify_assignment(spec, out.assignment)
     return GroundTruth(optimum=cert.objective_value, feasible_exists=True)
 
 
