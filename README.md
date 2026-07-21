@@ -20,8 +20,8 @@ flowchart TB
   subgraph agent [Your agent]
     LLM[LLM decides it needs a verified answer] --> Spec[Fills structured DecisionSpec]
   end
-  subgraph OptiMCP [OptiMCP tool]
-    Spec --> Build[Deterministic builder]
+  subgraph OptiMCP 
+    Spec --> Build[OptiMCP tool]
     Build --> Engine[Optimization engine]
     Build --> Classical[Classical exact / heuristic]
     Engine --> Verify[Independent verifier]
