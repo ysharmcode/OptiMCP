@@ -1,0 +1,10 @@
+{
+  "//": "Add OptiMCP as an MCP server. Works in Claude Desktop, Cursor, and any MCP client.",
+  "//install": "pip install optimcp  (the `optimcp` command launches the stdio server)",
+  "mcpServers": {
+    "optimcp": {
+      "command": "optimcp",
+      "args": []
+    }
+  }
+}

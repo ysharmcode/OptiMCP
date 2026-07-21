@@ -1,0 +1,26 @@
+Business Source License 1.1
+
+License text copyright (c) 2017 MariaDB Corporation Ab, All Rights Reserved.
+"Business Source License" is a trademark of MariaDB Corporation Ab.
+
+Parameters
+
+Licensor: QBridge contributors
+Licensed Work: OptiMCP, including all source files in this repository.
+Additional Use Grant: You may use, copy, modify, create derivative works of, and redistribute the Licensed Work for any purpose, provided that any redistribution before the Change Date is under this License and retains this notice.
+Change Date: 2030-07-21
+Change License: Apache License, Version 2.0
+
+Terms
+
+The Licensed Work is made available under the terms of this Business Source License. On the Change Date, or the fourth anniversary of the first public release of each later version of the Licensed Work, whichever is later, the Licensed Work will be made available under the Change License.
+
+The Licensor grants you the right to copy, modify, create derivative works of, redistribute, and make non-production use of the Licensed Work. The Additional Use Grant above specifies any additional permitted production use.
+
+The Licensed Work is provided on an "AS IS" basis. The Licensor disclaims all warranties, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. In no event will the Licensor be liable for any damages arising from use of the Licensed Work.
+
+You must conspicuously display this License on each copy of the Licensed Work that you redistribute. Any use of the Licensed Work in violation of this License automatically terminates your rights under this License.
+
+This License does not grant any right to use the Licensor's trademarks, except as required for reasonable and customary use in describing the origin of the Licensed Work.
+
+On the Change Date, the Licensed Work is licensed under the Apache License, Version 2.0. A copy of that license is available at https://www.apache.org/licenses/LICENSE-2.0.

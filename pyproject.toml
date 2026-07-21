@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optimcp"
+version = "0.1.0"
+description = "A decision engine that can't lie about the constraints - an MCP / function-calling tool that returns verified, constraint-satisfying answers for AI agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BUSL-1.1"
+authors = [{name = "QBridge contributors"}]
+keywords = ["mcp", "agent", "tools", "optimization", "constraints", "function-calling", "llm"]
+dependencies = [
+    "qbridge>=0.5.1",
+    "mcp>=1.2.0",
+    "pydantic>=2.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/ProfessionalQwerty/OptiMCP"
+Source = "https://github.com/ProfessionalQwerty/OptiMCP"
+Issues = "https://github.com/ProfessionalQwerty/OptiMCP/issues"
+
+[project.scripts]
+optimcp = "optimcp.server:main"
+
+[project.optional-dependencies]
+qokit = ["qbridge[qokit]>=0.5.1"]
+langchain = ["langchain-core>=0.3"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["optimcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

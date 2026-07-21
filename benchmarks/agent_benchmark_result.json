@@ -1,0 +1,49 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "n": 8,
+  "note": "Clean full run. A later N=25 attempt was abandoned because the OpenRouter free-tier balance ran out mid-run (HTTP 402 on nearly every call); those numbers were discarded. Re-run at N>=20 pending credits or a Gemini key.",
+  "scenarios": {
+    "budget_easy": {
+      "category": "budget",
+      "trap": false,
+      "optimum": 90.0,
+      "no_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    },
+    "budget_trap": {
+      "category": "budget",
+      "trap": true,
+      "optimum": 160.0,
+      "no_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 0.25, "optimal_rate": 0.25, "violation_rate": 0.75, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    },
+    "scheduling_easy": {
+      "category": "scheduling",
+      "trap": false,
+      "optimum": 9.0,
+      "no_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    },
+    "scheduling_trap": {
+      "category": "scheduling",
+      "trap": true,
+      "optimum": 3.0,
+      "no_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    },
+    "portfolio_easy": {
+      "category": "portfolio",
+      "trap": false,
+      "optimum": 105.0,
+      "no_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    },
+    "portfolio_trap": {
+      "category": "portfolio",
+      "trap": true,
+      "optimum": 98.0,
+      "no_tool": {"runs": 8, "feasible_rate": 0.875, "optimal_rate": 0.875, "violation_rate": 0.125, "parse_rate": 1.0, "tool_call_rate": 0.0},
+      "with_tool": {"runs": 8, "feasible_rate": 1.0, "optimal_rate": 1.0, "violation_rate": 0.0, "parse_rate": 1.0, "tool_call_rate": 1.0}
+    }
+  }
+}
