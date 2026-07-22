@@ -1,21 +1,13 @@
-"""OptiMCP - a consistency checker that can't lie about the numbers.
+"""OptiMCP - verification layer over agent structured emissions.
 
-OptiMCP is an MCP server and function-calling tool that any agent (Claude, GPT,
-LangChain, ...) can call to **check whether structured output actually obeys its
-own stated rules**. Hand :func:`check_consistency` a JSON document (a budget, an
-invoice, a schedule, a financial table) and a set of declared rules, and it
-tells you *provably which rule broke* - the computed value, the expected value,
-and the delta.
+OptiMCP checks whether structured output obeys declared numeric/logical rules
+and *provably tells you which rule broke*. Use :func:`check_consistency` for
+one-shot checks, or register named rulesets and run the self-hosted daemon for
+always-on monitoring with observe/refuse policies.
 
-The tool itself uses **no LLM**: rules are pure data and every number is
-recomputed independently in exact :class:`~decimal.Decimal` arithmetic. That
-independence is the whole point - it is the check an LLM's own reasoning cannot
-provide for itself.
-
-The original decision **solver** (:func:`solve_decision`, OR-Tools CP-SAT plus a
-simulated-annealing second opinion, each answer independently re-verified) is
-still here as an optional *repair* path: when a broken ruleset is linear, it can
-return a corrected, verified answer.
+No LLM is used inside OptiMCP: every number is recomputed in exact Decimal
+arithmetic. The optional solver (:func:`solve_decision`) remains available as a
+repair path for linear numeric problems.
 """
 
 from optimcp.spec import (
@@ -36,8 +28,15 @@ from optimcp.check import (
     Ruleset,
     check_consistency,
 )
+from optimcp.monitor import (
+    MonitorService,
+    MonitorStore,
+    RulesetRecord,
+    VerifyResult,
+    document_hash,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ConstraintCheck",
@@ -46,14 +45,19 @@ __all__ = [
     "DecisionResult",
     "DecisionSpec",
     "Expr",
+    "MonitorService",
+    "MonitorStore",
     "ObjectiveSpec",
     "Rule",
     "RuleCheck",
     "Ruleset",
+    "RulesetRecord",
     "Term",
     "VariableSpec",
     "VerificationCertificate",
+    "VerifyResult",
     "check_consistency",
+    "document_hash",
     "solve_decision",
     "verify_assignment",
 ]

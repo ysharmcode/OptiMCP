@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>OptiMCP</strong> — a consistency checker that can't lie about the numbers
+  <strong>OptiMCP</strong> — the verification layer over your agents and systems of record
 </p>
 
 <p align="center">
@@ -9,19 +9,22 @@
   <img alt="MCP" src="https://img.shields.io/badge/MCP-compatible-8A2BE2.svg">
 </p>
 
-**Give any AI agent (Claude, GPT, LangChain, …) a tool that checks whether its own structured output actually obeys the rules — and *provably tells you which rule broke*, with the computed value, the expected value, and the delta.**
+**Register the rules once. Wrap your agent. Every structured write or fetch is checked continuously — and OptiMCP *provably tells you which rule broke*.**
 
-LLMs are fluent but structurally bad at *preserving arithmetic and logical invariants*. They read a single number fine, then fall apart the moment several numbers have to combine under a rule: a total that doesn't match its line items, a growth rate computed with the wrong sign, an allocation that doesn't add up to the budget, a table that doesn't cross-foot. Worse, a model **cannot reliably audit its own arithmetic** — the same machinery that made the mistake is the one you'd be asking to catch it.
-
-OptiMCP is the independent auditor. You hand `check_consistency` a JSON document and a set of **declared rules**, and it recomputes every rule from scratch — **no LLM, exact decimal arithmetic** — then reports exactly which rules held, which broke (with the delta), and which couldn't even be evaluated. It never silently skips a rule, and it never crashes on bad data.
+LLMs are fluent but structurally bad at *preserving arithmetic and logical invariants*. They fall apart when several numbers must combine under a rule (totals vs line items, growth %, allocations). They also **cannot reliably audit themselves**. OptiMCP is the independent layer: named rulesets, a self-hosted always-on daemon, and agent middleware that verifies every structured emission with exact decimal arithmetic and no LLM inside.
 
 ```mermaid
 flowchart LR
-  Agent["LLM / agent"] -->|"document + declared rules"| Check["check_consistency"]
-  Check --> Eval["Deterministic evaluator (Decimal, no LLM)"]
-  Eval --> Report["Report: which rule broke, computed vs expected, delta"]
-  Report -.->|"if broken and linear"| Solve["solve_decision (optional repair)"]
+  Agent[Agent / LLM] --> MW[Middleware intercept]
+  MW -->|"document + ruleset_id"| Daemon[optimcp daemon]
+  Daemon --> Kernel[check_consistency]
+  Kernel --> Policy{policy}
+  Policy -->|refuse| Block[Block + report]
+  Policy -->|observe| Pass[Pass + log]
+  Kernel --> Log[Violation store + alerts + dashboard]
 ```
+
+One-shot `check_consistency(document, rules)` is still available for ad-hoc checks; production monitoring uses **named rulesets** + the daemon.
 
 ---
 
@@ -42,34 +45,33 @@ This isn't finance-only. Anywhere an agent emits **numbers or facts subject to r
 
 | You want… | OptiMCP gives you… |
 |---|---|
-| To catch output that violates its own stated rules | `check_consistency(document, rules)` → exactly which rule broke, with the delta |
+| Always-on checks on agent emissions | Named rulesets + `optimcp-daemon` + middleware (`observe` or `refuse`) |
+| To catch output that violates its own stated rules | Per-rule verdict with computed vs expected and the delta |
 | A check an LLM cannot fake | No LLM inside; every number recomputed independently in exact `Decimal` |
-| To never be lied to by silence | A rule it can't evaluate (missing/non-numeric field) is reported as **failed**, never skipped |
-| Real arithmetic, not float slop | `Decimal` end-to-end — money, tax and % chains don't drift |
-| To catch derived-value mistakes | `pct_change`, ratios, margins, aggregations over arrays, cross-footing |
-| To wire it into any stack | MCP server, OpenAI/Anthropic function schema, LangChain tool |
-| A corrected answer when it makes sense | `solve_decision` — an optional repair/optimization engine for linear numeric problems |
-
-OptiMCP is **not** an LLM wrapper or a general planner. It is a **deterministic checker with an independent-verification core**. The guarantee is that the verdict for each rule is computed correctly and independently — not that your rules capture everything you *meant* (see [What "guaranteed" means](#what-guaranteed-means-honestly)).
+| To never be lied to by silence | Unevaluable rules (missing/non-numeric) count as **failed**, never skipped |
+| Safe self-hosting | Bearer token on all `/v1/*` (`OPTIMCP_DAEMON_TOKEN`); unauthenticated only with explicit loopback opt-out |
+| To wire it into any stack | MCP tools, OpenAI wrapper, LangChain callback, HTTP `/v1/check` |
+| A corrected answer when it makes sense | `solve_decision` — optional repair for linear numeric problems |
 
 ---
 
 ## Table of contents
 
 1. [Install](#install)
-2. [60-second quickstart](#60-second-quickstart)
-3. [Add it to your agent](#add-it-to-your-agent)
-4. [The rule language](#the-rule-language)
-5. [The report payload](#the-report-payload)
-6. [What it catches (worked example)](#what-it-catches-worked-example)
-7. [How it works](#how-it-works)
-8. [Does it actually help? (benchmark)](#does-it-actually-help-benchmark)
-9. [What "guaranteed" means (honestly)](#what-guaranteed-means-honestly)
-10. [Optional: repair a broken answer](#optional-repair-a-broken-answer)
-11. [Examples](#examples)
-12. [Troubleshooting](#troubleshooting)
-13. [Repository layout](#repository-layout)
-14. [License](#license)
+2. [Always-on daemon](#always-on-daemon)
+3. [60-second one-shot check](#60-second-one-shot-check)
+4. [Add it to your agent](#add-it-to-your-agent)
+5. [The rule language](#the-rule-language)
+6. [The report payload](#the-report-payload)
+7. [What it catches (worked example)](#what-it-catches-worked-example)
+8. [How it works](#how-it-works)
+9. [Does it actually help? (benchmark)](#does-it-actually-help-benchmark)
+10. [What "guaranteed" means (honestly)](#what-guaranteed-means-honestly)
+11. [Optional: repair a broken answer](#optional-repair-a-broken-answer)
+12. [Examples](#examples)
+13. [Troubleshooting](#troubleshooting)
+14. [Repository layout](#repository-layout)
+15. [License](#license)
 
 ---
 
@@ -78,41 +80,45 @@ OptiMCP is **not** an LLM wrapper or a general planner. It is a **deterministic 
 **Requirements**
 
 - Python **3.10+**
-- The checker itself is pure Python + Pydantic. The optional repair engine uses Google OR-Tools CP-SAT and D-Wave `dwave-samplers` — pure-CPU wheels that install automatically from PyPI on Windows/macOS/Linux. No GPU, no CUDA, no WSL.
+- The checker itself is pure Python + Pydantic. The optional repair engine uses Google OR-Tools CP-SAT and D-Wave `dwave-samplers`. The daemon extras add FastAPI/uvicorn.
 
 **PyPI**
 
 ```bash
 pip install optimcp
+pip install "optimcp[daemon]"     # always-on HTTP daemon + YAML rulesets
+pip install "optimcp[langchain]"  # LangChain adapters
+pip install "optimcp[dev]"        # pytest + daemon test deps
 ```
-
-**Extras**
-
-```bash
-pip install "optimcp[langchain]"  # LangChain StructuredTool adapters
-pip install "optimcp[dev]"        # pytest for the test suite
-```
-
-**Source checkout**
-
-```bash
-git clone https://github.com/ProfessionalQwerty/OptiMCP.git
-cd OptiMCP
-pip install -e ".[dev]"
-```
-
-This installs:
 
 | Command / module | Purpose |
 |---|---|
-| `optimcp` | Launches the MCP stdio server (`check_consistency`, `solve_decision`, `verify_solution`, `capabilities`) |
-| `import optimcp` | `check_consistency`, `Rule`, `Ruleset`, report models (and the solver API) |
-| `optimcp.schemas` | OpenAI / Anthropic function-tool JSON schema export |
-| `optimcp.adapters.langchain` | LangChain `StructuredTool` wrappers |
+| `optimcp` | MCP stdio server |
+| `optimcp-daemon` | Always-on verification daemon + ruleset CLI |
+| `import optimcp` | `check_consistency`, `MonitorService`, report models |
+| `optimcp.middleware` | OpenAI wrap + policy helpers |
 
 ---
 
-## 60-second quickstart
+## Always-on daemon
+
+Full walkthrough: [`examples/daemon_quickstart.md`](examples/daemon_quickstart.md).
+
+```bash
+export OPTIMCP_DAEMON_TOKEN="$(openssl rand -hex 32)"   # required
+optimcp-daemon register examples/register_invoice_ruleset.yaml
+optimcp-daemon serve --host 127.0.0.1 --port 8787
+```
+
+**Auth (locked):** every `/v1/*` route and `/dashboard` require `Authorization: Bearer <token>`. Startup fails without a token unless you bind **loopback** and pass `--allow-unauthenticated-localhost`. Non-loopback binds always require a token (the opt-out is ignored). `GET /health` stays open for liveness only. This prevents silent ruleset overwrites on shared hosts.
+
+**Routes:** `PUT/GET /v1/rulesets`, `POST /v1/check` (and `/v1/ingest`), `GET /v1/violations`, `GET /dashboard`. Policy `refuse` → HTTP 422 when inconsistent.
+
+Agent middleware reads `OPTIMCP_DAEMON_URL` (default `http://127.0.0.1:8787`) and `OPTIMCP_DAEMON_TOKEN`.
+
+---
+
+## 60-second one-shot check
 
 **Call it directly in Python:**
 
@@ -155,7 +161,7 @@ print(report.summary)
 }
 ```
 
-Your agent now has: `check_consistency`, `solve_decision`, `verify_solution`, `capabilities`.
+Your agent now has: `verify_against_ruleset`, `list_rulesets`, `check_consistency`, `solve_decision`, `verify_solution`, `capabilities`.
 
 ---
 
@@ -372,11 +378,13 @@ Anything outside the linear-scalar subset (aggregations, division by a variable,
 
 | File | Shows |
 |---|---|
-| [`examples/check_consistency.py`](examples/check_consistency.py) | A live model drafts an invoice; OptiMCP audits its multivariate arithmetic |
-| [`examples/check_financial_report.py`](examples/check_financial_report.py) | Catching a wrong growth % and a cross-footing error (no API key) |
-| [`examples/mcp_config.json`](examples/mcp_config.json) | One-line MCP client registration |
-
-The live example works with an `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`; set `OPTIMCP_MODEL` to override the model.
+| [`examples/daemon_quickstart.md`](examples/daemon_quickstart.md) | Token, register ruleset, serve, curl check, dashboard |
+| [`examples/register_invoice_ruleset.yaml`](examples/register_invoice_ruleset.yaml) | Sample named ruleset (`refuse`) |
+| [`examples/middleware_openai.py`](examples/middleware_openai.py) | OpenAI wrapper refuses a bad invoice |
+| [`examples/always_on_loop.py`](examples/always_on_loop.py) | Continuous ingest + violation stats |
+| [`examples/check_consistency.py`](examples/check_consistency.py) | Live model drafts an invoice; one-shot audit |
+| [`examples/check_financial_report.py`](examples/check_financial_report.py) | Wrong growth % + cross-footing (no API key) |
+| [`examples/mcp_config.json`](examples/mcp_config.json) | MCP client registration |
 
 ---
 
@@ -384,13 +392,12 @@ The live example works with an `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTE
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Rule shows up in `unevaluable` | A referenced field is missing, miscased, or non-numeric | Fix the `path` (case-sensitive) or the document; check `RuleCheck.error` |
-| `consistent=False` but you expected pass | A real violation — read `broken_rules` and the per-rule `detail`/`delta` | Trust it; the arithmetic is independent |
-| A coercion note you didn't expect | A value was a string like `"$1,200"` and got normalized | Confirm the intended unit; emit numbers, not strings, if possible |
-| `pct_change` rule is unevaluable | Base (`old`) is zero → undefined | Guard the case or use a different rule |
-| `division by zero` error on a rule | `div`/ratio with a zero denominator | Handle the zero case in your rules |
-| Validation error on a rule | Malformed `Expr` (e.g. `agg` path without `[*]`, wrong arity) | See [The rule language](#the-rule-language) |
-| MCP client shows no tools | Server not launched / wrong command | Ensure `optimcp` is on PATH; test `optimcp --help` |
+| Daemon refuses to start | No `OPTIMCP_DAEMON_TOKEN` | Set the env var, or use loopback + `--allow-unauthenticated-localhost` |
+| `401` on `/v1/*` | Missing/wrong Bearer token | Send `Authorization: Bearer $OPTIMCP_DAEMON_TOKEN` |
+| Rule shows up in `unevaluable` | Missing/miscased/non-numeric field | Fix the `path` or document; see `RuleCheck.error` |
+| `consistent=False` but you expected pass | Real violation | Read `broken_rules` and per-rule `delta` |
+| `422` from `/v1/check` | Ruleset policy is `refuse` | Fix the document or switch policy to `observe` |
+| MCP client shows no tools | Server not launched | Ensure `optimcp` is on PATH; test `optimcp --help` |
 
 ---
 
@@ -398,28 +405,17 @@ The live example works with an `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTE
 
 ```text
 OptiMCP/
-  pyproject.toml            Package metadata; optimcp console entry
-  LICENSE                   Business Source License 1.1
-  README.md                 This file
+  pyproject.toml
   src/optimcp/
-    check/
-      rules.py              Rule language: Expr AST, Rule, Ruleset (validated)
-      paths.py              Deterministic path resolver (., [i], [*])
-      eval.py               Decimal evaluator; verify-or-refuse; coercion notes
-      result.py             RuleCheck / ConsistencyReport models
-      repair.py             Optional: linear rules -> DecisionSpec -> solver fix
-      __init__.py           check_consistency() entry point
-    spec.py                 DecisionSpec + validation (solver input contract)
-    verify.py               Independent constraint/domain verifier (solver side)
-    solve.py                Solver orchestrator: two engines, verify, best wins
-    engines/                CP-SAT (exact) + simulated annealing (heuristic)
-    result.py               DecisionResult / VerificationCertificate models
-    server.py               FastMCP server (check_consistency + solver tools)
-    schemas.py              OpenAI / Anthropic function-tool schema export
-    adapters/langchain.py   LangChain StructuredTool wrappers
-  examples/                 Consistency-check demos + MCP config
-  benchmarks/               Consistency benchmark (harness, results, writeup)
-  tests/                    check / paths / repair / spec / verify / solve / server
+    check/          Decimal consistency kernel
+    monitor/        Named rulesets, SQLite audit log, canonical hashing, alerts
+    daemon/         FastAPI app, bearer auth, dashboard, CLI
+    middleware/     OpenAI wrap, LangChain helpers, refuse/observe policy
+    server.py       MCP tools (verify_against_ruleset, check_consistency, …)
+    engines/        Optional CP-SAT + annealer repair path
+  examples/
+  benchmarks/
+  tests/
 ```
 
 ---

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optimcp"
-version = "0.1.0"
-description = "A consistency checker that can't lie about the numbers - an MCP / function-calling tool that tells AI agents exactly which rule their structured output broke"
+version = "0.2.0"
+description = "Verification layer for AI agents — deterministic consistency checks, named rulesets, and a self-hosted always-on daemon"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "BUSL-1.1"
 authors = [{name = "OptiMCP contributors"}]
-keywords = ["mcp", "agent", "tools", "verification", "consistency", "hallucination", "function-calling", "llm"]
+keywords = ["mcp", "agent", "tools", "verification", "consistency", "monitoring", "hallucination", "function-calling", "llm"]
 dependencies = [
     "ortools>=9.10",
     "dwave-samplers>=1.3",
@@ -26,10 +26,12 @@ Issues = "https://github.com/ProfessionalQwerty/OptiMCP/issues"
 
 [project.scripts]
 optimcp = "optimcp.server:main"
+optimcp-daemon = "optimcp.daemon.cli:main"
 
 [project.optional-dependencies]
 langchain = ["langchain-core>=0.3"]
-dev = ["pytest>=7.0"]
+daemon = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.27", "pyyaml>=6.0"]
+dev = ["pytest>=7.0", "fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.27", "pyyaml>=6.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

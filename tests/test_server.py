@@ -74,11 +74,22 @@ def test_list_tools_exposes_all_tools():
 
     names = {t.name for t in asyncio.run(go())}
     assert {
+        "verify_against_ruleset",
+        "list_rulesets",
         "check_consistency",
         "solve_decision",
         "verify_solution",
         "capabilities",
     } <= names
+
+
+def test_list_rulesets_tool():
+    async def go():
+        return await mcp.call_tool("list_rulesets", {})
+
+    out = _structured(asyncio.run(go()))
+    assert "rulesets" in out
+    assert isinstance(out["rulesets"], list)
 
 
 def test_check_consistency_tool_round_trip():
@@ -119,7 +130,9 @@ def test_capabilities_tool():
         return await mcp.call_tool("capabilities", {})
 
     caps = _structured(asyncio.run(go()))
-    assert caps["primary_tool"] == "check_consistency"
+    assert caps["primary_tool"] == "verify_against_ruleset"
+    assert "verification_layer" in caps
+    assert caps["verification_layer"]["daemon"]["token_env"] == "OPTIMCP_DAEMON_TOKEN"
     cc = caps["check_consistency"]
     assert set(cc["expression_kinds"]) == {"lit", "ref", "agg", "calc"}
     assert "sum" in cc["aggregations"]

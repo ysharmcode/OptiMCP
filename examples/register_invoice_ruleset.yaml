@@ -1,0 +1,33 @@
+# Invoice ruleset for the OptiMCP daemon
+id: invoices
+version: 1
+policy: refuse
+source: erp.invoices
+description: Line items must foot to subtotal; tax and total must follow.
+rules:
+  - id: subtotal_foots
+    lhs: {kind: ref, path: subtotal}
+    op: "=="
+    rhs: {kind: agg, fn: sum, path: line_items[*].amount}
+    abs_tol: 0.01
+    message: subtotal must equal sum of line item amounts
+  - id: tax_correct
+    lhs: {kind: ref, path: tax}
+    op: "=="
+    rhs:
+      kind: calc
+      fn: mul
+      args:
+        - {kind: ref, path: subtotal}
+        - {kind: ref, path: tax_rate}
+    abs_tol: 0.01
+  - id: total_correct
+    lhs: {kind: ref, path: total}
+    op: "=="
+    rhs:
+      kind: calc
+      fn: add
+      args:
+        - {kind: ref, path: subtotal}
+        - {kind: ref, path: tax}
+    abs_tol: 0.01

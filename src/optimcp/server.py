@@ -1,12 +1,13 @@
 """OptiMCP MCP server.
 
-Exposes four tools over MCP (stdio by default; optional HTTP):
+Exposes tools over MCP (stdio by default; optional HTTP):
 
-* ``check_consistency`` - hand it a JSON document + declared rules, get back
-  *exactly which rule broke* (computed vs expected, with the delta). Headline.
-* ``solve_decision``    - hand it a decision spec, get back a verified answer.
-* ``verify_solution``   - check an assignment the agent *already* has in mind.
-* ``capabilities``      - what shapes/limits are supported.
+* ``verify_against_ruleset`` - check a document against a *named* ruleset (daemon/store).
+* ``list_rulesets``          - list registered rulesets.
+* ``check_consistency``      - ad-hoc document + inline rules.
+* ``solve_decision``         - optional repair/optimization.
+* ``verify_solution``        - check a solver assignment.
+* ``capabilities``           - shapes/limits.
 
 Run with the ``optimcp`` console script or ``python -m optimcp.server``.
 """
@@ -14,12 +15,16 @@ Run with the ``optimcp`` console script or ``python -m optimcp.server``.
 from __future__ import annotations
 
 import argparse
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from optimcp.check import check_consistency as _check_consistency
 from optimcp.check.rules import AGG_FNS, CALC_FNS, MAX_RULES, Rule
+from optimcp.middleware.client import DaemonClientError, verify_local_or_remote
+from optimcp.middleware.policy import result_as_tool_error
+from optimcp.monitor.service import MonitorService, RulesetNotFound
+from optimcp.monitor.store import MonitorStore
 from optimcp.result import DecisionResult, VerificationCertificate
 from optimcp.solve import solve_decision as _solve_decision
 from optimcp.spec import (
@@ -32,18 +37,67 @@ from optimcp.verify import verify_assignment as _verify_assignment
 mcp = FastMCP(
     "optimcp",
     instructions=(
-        "A consistency checker that can't lie about the numbers. Call "
-        "check_consistency with a JSON document (a budget, invoice, schedule, "
-        "financial table) and a list of declared rules; it recomputes every "
-        "rule independently (no LLM, exact decimal arithmetic) and tells you "
-        "PROVABLY which rule broke - the computed value, the expected value, and "
-        "the delta. A rule it cannot evaluate (missing/non-numeric field) is "
-        "reported as failed, never silently skipped. Use this to audit your own "
-        "structured output before you commit to it. solve_decision (and its "
-        "optional repair path) can additionally produce a corrected answer for "
-        "linear numeric problems."
+        "OptiMCP is the verification layer over whatever you write or fetch from "
+        "systems of record. Prefer verify_against_ruleset with a registered "
+        "ruleset_id for always-on checking (observe or refuse policy). Use "
+        "check_consistency for one-shot ad-hoc rules. Every check recomputes "
+        "numbers independently (no LLM, exact decimal arithmetic) and reports "
+        "PROVABLY which rule broke. solve_decision remains available as an "
+        "optional repair path for linear numeric problems."
     ),
 )
+
+
+@mcp.tool()
+def verify_against_ruleset(
+    ruleset_id: str,
+    document: Dict[str, Any],
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Verify ``document`` against a named ruleset registered with the daemon/store.
+
+    Talks to the local OptiMCP daemon when available (OPTIMCP_DAEMON_URL +
+    OPTIMCP_DAEMON_TOKEN), otherwise uses the on-disk MonitorStore under
+    OPTIMCP_HOME. When the ruleset policy is ``refuse`` and the document is
+    inconsistent, ``refused`` is true and the agent must not treat the document
+    as accepted.
+    """
+    try:
+        result = verify_local_or_remote(
+            ruleset_id,
+            document,
+            correlation_id=correlation_id,
+            prefer_remote=True,
+            source="mcp",
+        )
+    except DaemonClientError as exc:
+        return {"ok": False, "error": str(exc), "status": getattr(exc, "status", None)}
+    except RulesetNotFound as exc:
+        return {"ok": False, "error": f"ruleset not found: {exc}"}
+    payload = result.model_dump_report()
+    payload["ok"] = not result.refused
+    if result.refused:
+        payload["agent_error"] = result_as_tool_error(result)
+    return payload
+
+
+@mcp.tool()
+def list_rulesets() -> Dict[str, Any]:
+    """List named rulesets registered in the local MonitorStore (OPTIMCP_HOME)."""
+    rows = MonitorService(store=MonitorStore()).list_rulesets()
+    return {
+        "rulesets": [
+            {
+                "id": r.id,
+                "version": r.version,
+                "policy": r.policy,
+                "source": r.source,
+                "rule_count": len(r.rules),
+                "description": r.description,
+            }
+            for r in rows
+        ]
+    }
 
 
 @mcp.tool()
@@ -52,16 +106,8 @@ def check_consistency(
 ) -> Dict[str, Any]:
     """Check whether a JSON ``document`` obeys its declared numeric/logical ``rules``.
 
-    Each rule asserts ``lhs <op> rhs`` where ``lhs``/``rhs`` are expressions over
-    the document: literals, field refs (``"invoice.total"``,
-    ``"line_items[0].amount"``), aggregations over a wildcard path
-    (``sum``/``avg``/``min``/``max``/``count`` of ``"line_items[*].amount"``), and
-    arithmetic (``add``/``sub``/``mul``/``div``/``neg``/``abs``/``round``/``pow``/
-    ``pct_change``). Returns a report naming every VIOLATED rule with its computed
-    value, expected value and delta, plus any rule that could not be evaluated.
-    Use this to catch totals that do not match their line items, growth
-    percentages computed the wrong way, allocations that do not sum to the
-    budget, and similar arithmetic-invariant failures.
+    Ad-hoc one-shot check (inline rules). For always-on monitoring prefer
+    ``verify_against_ruleset`` with a registered ``ruleset_id``.
     """
     return _check_consistency(document, rules).model_dump()
 
@@ -96,11 +142,28 @@ def verify_solution(spec: DecisionSpec, assignment: Dict[str, float]) -> Dict[st
 def capabilities() -> Dict[str, Any]:
     """Describe what this server can check/solve and its limits."""
     return {
-        "primary_tool": "check_consistency",
+        "primary_tool": "verify_against_ruleset",
+        "verification_layer": {
+            "purpose": (
+                "Always-on verification over agent structured emissions and "
+                "systems-of-record documents via named rulesets."
+            ),
+            "tools": ["verify_against_ruleset", "list_rulesets", "check_consistency"],
+            "daemon": {
+                "url_env": "OPTIMCP_DAEMON_URL",
+                "token_env": "OPTIMCP_DAEMON_TOKEN",
+                "default_url": "http://127.0.0.1:8787",
+                "auth": (
+                    "Bearer token required on /v1/* unless loopback bind with "
+                    "explicit --allow-unauthenticated-localhost"
+                ),
+            },
+            "policies": ["observe", "refuse"],
+        },
         "check_consistency": {
             "purpose": (
-                "Deterministically verify that a JSON document obeys declared "
-                "numeric/logical rules, and report exactly which rule broke."
+                "Ad-hoc: deterministically verify a JSON document against inline "
+                "rules and report exactly which rule broke."
             ),
             "expression_kinds": ["lit", "ref", "agg", "calc"],
             "aggregations": sorted(AGG_FNS),
@@ -142,8 +205,7 @@ def capabilities() -> Dict[str, Any]:
             },
         },
         "notes": [
-            "check_consistency reads arbitrary nested JSON; solve_decision uses "
-            "flat binary/integer variables with linear/quadratic terms.",
+            "Prefer named rulesets + daemon for production monitoring.",
             "Field/variable names are case-sensitive; unknown or missing names "
             "are reported, never silently ignored.",
         ],

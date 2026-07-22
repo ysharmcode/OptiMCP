@@ -62,3 +62,37 @@ def build_langchain_tool() -> Any:
         description=SOLVE_TOOL_DESCRIPTION,
         args_schema=DecisionSpec,
     )
+
+
+def build_verification_callback(
+    ruleset_id: str,
+    *,
+    raise_on_refuse: bool = True,
+    prefer_remote: bool = True,
+) -> Any:
+    """Return a :class:`~optimcp.middleware.langchain.VerificationCallbackHandler`."""
+    from optimcp.middleware.langchain import VerificationCallbackHandler
+
+    return VerificationCallbackHandler(
+        ruleset_id,
+        raise_on_refuse=raise_on_refuse,
+        prefer_remote=prefer_remote,
+    )
+
+
+def with_verification(
+    runnable: Any,
+    *,
+    ruleset_id: str,
+    raise_on_refuse: bool = True,
+    prefer_remote: bool = True,
+) -> Any:
+    """Wrap a LangChain runnable so structured outputs are verified."""
+    from optimcp.middleware.langchain import with_verification as _wrap
+
+    return _wrap(
+        runnable,
+        ruleset_id=ruleset_id,
+        raise_on_refuse=raise_on_refuse,
+        prefer_remote=prefer_remote,
+    )
