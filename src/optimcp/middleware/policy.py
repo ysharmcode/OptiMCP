@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from optimcp.middleware.client import verify_local_or_remote
-from optimcp.monitor.models import VerifyResult
+from optimcp.monitor.models import CheckSource, VerifyResult
 
 
 class VerificationRefused(Exception):
@@ -31,7 +31,7 @@ def verify_then_policy(
     *,
     correlation_id: Optional[str] = None,
     prefer_remote: bool = True,
-    source: str = "agent",
+    source: CheckSource = "agent",
     raise_on_refuse: bool = True,
 ) -> VerifyResult:
     """Verify locally or via daemon, then apply refuse/observe policy."""
@@ -40,7 +40,7 @@ def verify_then_policy(
         document,
         correlation_id=correlation_id,
         prefer_remote=prefer_remote,
-        source=source,  # type: ignore[arg-type]
+        source=source,
     )
     return apply_policy(result, raise_on_refuse=raise_on_refuse)
 
