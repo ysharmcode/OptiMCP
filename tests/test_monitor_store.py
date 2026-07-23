@@ -1,6 +1,5 @@
 """Monitor store + service."""
 
-import json
 from pathlib import Path
 
 from optimcp.check.rules import Rule
