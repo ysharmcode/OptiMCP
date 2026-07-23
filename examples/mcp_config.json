@@ -4,7 +4,12 @@
   "mcpServers": {
     "optimcp": {
       "command": "optimcp",
-      "args": []
+      "args": [],
+      "env": {
+        "OPTIMCP_HOME": "~/.optimcp",
+        "OPTIMCP_DAEMON_URL": "http://127.0.0.1:8787",
+        "OPTIMCP_DAEMON_TOKEN": "replace-with-your-daemon-token"
+      }
     }
   }
 }
