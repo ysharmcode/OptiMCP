@@ -15,6 +15,7 @@ from optimcp.middleware.policy import (
     VerificationRefused,
     apply_policy,
     result_as_tool_error,
+    verify_then_policy,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "result_as_tool_error",
     "verify_local_or_remote",
     "verify_remote",
+    "verify_then_policy",
 ]
