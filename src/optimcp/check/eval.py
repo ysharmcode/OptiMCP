@@ -41,9 +41,12 @@ def _coerce(raw: Any, path: str, ctx: _Ctx) -> Decimal:
         raise EvalError(f"value at {path!r} is a boolean, not a number", [path])
     if isinstance(raw, (int, float, Decimal)):
         try:
-            return Decimal(str(raw))
+            val = Decimal(str(raw))
         except InvalidOperation:
             raise EvalError(f"value at {path!r} is not a finite number", [path])
+        if not val.is_finite():
+            raise EvalError(f"value at {path!r} is not a finite number", [path])
+        return val
     if isinstance(raw, str):
         s = raw.strip()
         original = s
@@ -63,6 +66,8 @@ def _coerce(raw: Any, path: str, ctx: _Ctx) -> Decimal:
             val = Decimal(s) * scale
         except InvalidOperation:
             raise EvalError(f"value at {path!r} is not numeric: {raw!r}", [path])
+        if not val.is_finite():
+            raise EvalError(f"value at {path!r} is not a finite number", [path])
         if neg:
             val = -val
         # note only when normalization actually changed the token

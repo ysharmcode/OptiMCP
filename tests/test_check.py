@@ -240,6 +240,22 @@ def test_casing_mismatch_is_unevaluable():
     assert "t" in rep.unevaluable
 
 
+def test_nan_and_inf_are_unevaluable():
+    import math
+
+    rep = check_consistency(
+        {"a": math.nan, "b": math.inf},
+        [
+            _rule(id="nan", lhs={"kind": "ref", "path": "a"}, op="==",
+                  rhs={"kind": "lit", "value": 0}),
+            _rule(id="inf", lhs={"kind": "ref", "path": "b"}, op="==",
+                  rhs={"kind": "lit", "value": 0}),
+        ],
+    )
+    assert set(rep.unevaluable) == {"nan", "inf"}
+    assert not rep.consistent
+
+
 # --------------------------- report shape / robustness ---------------------------
 
 
