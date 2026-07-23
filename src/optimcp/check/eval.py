@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, DivisionByZero, InvalidOperation, getcontext
-from typing import Any, List, Tuple
+from typing import Any, List
 
 from optimcp.check.paths import PathError, resolve_all, resolve_ref
 from optimcp.check.result import ConsistencyReport, RuleCheck
