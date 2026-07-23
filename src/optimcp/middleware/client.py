@@ -9,7 +9,7 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 from optimcp.check.result import ConsistencyReport
-from optimcp.monitor.models import VerifyResult
+from optimcp.monitor.models import CheckSource, VerifyResult
 from optimcp.monitor.service import MonitorService, RulesetNotFound
 from optimcp.monitor.store import MonitorStore
 
@@ -97,7 +97,7 @@ def verify_local_or_remote(
     *,
     correlation_id: Optional[str] = None,
     prefer_remote: bool = True,
-    source: str = "agent",
+    source: CheckSource = "agent",
 ) -> VerifyResult:
     """Try the daemon first; fall back to in-process MonitorStore only if unreachable."""
     if prefer_remote:
@@ -113,7 +113,7 @@ def verify_local_or_remote(
         return MonitorService(store=MonitorStore()).verify(
             ruleset_id,
             document,
-            source=source,  # type: ignore[arg-type]
+            source=source,
             correlation_id=correlation_id,
         )
     except RulesetNotFound as exc:
